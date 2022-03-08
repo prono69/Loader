@@ -3,3 +3,11 @@ gitpython
 motor
 pyrogram
 python-dotenv
+ujson
+nekos.py
+pornhub_api
+git+https://github.com/Nekos-life/Async-nekos.life-wrapper
+html-telegraph-poster
+emoji
+ 
+ 
