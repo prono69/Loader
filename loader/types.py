@@ -13,7 +13,7 @@ class RepoInfo:
         self.url = url
         self.count = 0
         self.max_count = 0
-        self.branches = set()
+        self.branches = []
 
     @classmethod
     def parse(cls, id_: int, priority: int, branch: str,
@@ -43,7 +43,11 @@ class Update:
     @classmethod
     def parse(cls, repo_url: str, commit: Commit) -> 'Update':
         summary = str(commit.summary)
+
         author = commit.author.name
+        if author == "None":
+            author = commit.committer.name
+
         version = commit.hexsha
         count = commit.count()
         url = repo_url.rstrip('/') + "/commit/" + version

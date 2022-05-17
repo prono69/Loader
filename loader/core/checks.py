@@ -1,5 +1,6 @@
 __all__ = ['do_checks']
 
+import atexit
 import json
 import os
 import sys
@@ -11,9 +12,11 @@ from struct import unpack, error as struct_error
 from dotenv import load_dotenv
 from pymongo import MongoClient
 
-from . import MIN_PY, MAX_PY, CONF_PATH, CONF_TMP_PATH
+from . import MIN_PY, MAX_PY, CONF_PATH
 from .types import Database
-from .utils import log, error, open_url
+from .utils import log, error, open_url, assert_read, assert_read_write
+
+atexit.register(lambda _: exists(_) and assert_read_write(_), CONF_PATH)
 
 
 def _git() -> None:
@@ -45,12 +48,8 @@ def _config_file() -> None:
     if isfile(CONF_PATH):
         log(f"\tConfig file found : {CONF_PATH}, Exporting ...")
 
+        assert_read(CONF_PATH)
         load_dotenv(CONF_PATH)
-
-    if isfile(CONF_TMP_PATH):
-        log(f"\tConfig file found : {CONF_TMP_PATH}, Exporting ...")
-
-        load_dotenv(CONF_TMP_PATH, override=True)
 
 
 def _vars() -> None:
@@ -58,7 +57,9 @@ def _vars() -> None:
 
     env = os.environ
 
-    if env.get('HU_STRING_SESSION'):
+    string = env.get('SESSION_STRING')
+
+    if env.get('HU_STRING_SESSION') and not string:
         error("Deprecated HU_STRING_SESSION var !", "its SESSION_STRING now")
 
     for _ in ('API_ID', 'API_HASH', 'DATABASE_URL', 'LOG_CHANNEL_ID'):
@@ -72,16 +73,21 @@ def _vars() -> None:
     if not log_channel.startswith("-100") or not log_channel[1:].isnumeric():
         error(f"Invalid LOG_CHANNEL_ID {log_channel} !", "it should startswith -100")
 
-    string = env.get('SESSION_STRING')
     bot_token = env.get('BOT_TOKEN')
 
     if not string and not bot_token:
         error("Required SESSION_STRING or BOT_TOKEN var !")
 
     if string:
+        if len(string) == 351:
+            str_fmt = ">B?256sI?"
+        elif len(string) == 356:
+            str_fmt = ">B?256sQ?"
+        else:
+            str_fmt = ">BI?256sQ?"
+
         try:
-            unpack(f">B?256s{'I' if len(string) == 351 else 'Q'}?",
-                   urlsafe_b64decode(string + "=" * (-len(string) % 4)))
+            unpack(str_fmt, urlsafe_b64decode(string + "=" * (-len(string) % 4)))
         except struct_error:
             error("Invalid SESSION_STRING var !", "need a pyrogram session string")
 
@@ -112,6 +118,10 @@ def _vars() -> None:
 
     cmd_trigger = env['CMD_TRIGGER']
     sudo_trigger = env['SUDO_TRIGGER']
+
+    if len(cmd_trigger) != 1 or len(sudo_trigger) != 1:
+        error(f"Too large CMD_TRIGGER ({cmd_trigger}) or SUDO_TRIGGER ({sudo_trigger})",
+              "trigger should be a single character")
 
     if cmd_trigger == sudo_trigger:
         error(f"Invalid SUDO_TRIGGER!, You can't use {cmd_trigger} as SUDO_TRIGGER",
@@ -154,7 +164,12 @@ def _vars() -> None:
 
     if Database.is_none():
         db_url = env.get('DATABASE_URL')
-        new_url = Database.fix_url(db_url)
+
+        try:
+            new_url = Database.fix_url(db_url)
+        except ValueError:
+            error(f"Invalid DATABASE_URL > ({db_url}) !")
+            return
 
         if new_url != db_url:
             env['DATABASE_URL'] = new_url
@@ -200,9 +215,8 @@ def _vars() -> None:
         if chat_username:
             error(f"Can't use a public log chat (@{chat_username}) !", "make it private")
 
-    for _ in (down_path, 'logs', '.rcache'):
-        if not exists(_):
-            os.mkdir(_)
+    for _ in (down_path, '.rcache'):
+        os.makedirs(_, exist_ok=True)
 
 
 def do_checks() -> None:

@@ -1,6 +1,6 @@
 __all__ = ['log', 'error', 'terminate', 'call', 'open_url', 'get_client_type',
-           'safe_url', 'safe_repo_info', 'grab_conflicts', 'rmtree', 'clean_core',
-           'clean_plugins', 'print_logo']
+           'safe_url', 'safe_repo_info', 'grab_conflicts', 'assert_read', 'assert_write',
+           'assert_read_write', 'remove', 'rmtree', 'clean_core', 'clean_plugins', 'print_logo']
 
 import logging
 import os
@@ -10,6 +10,7 @@ import subprocess
 from copy import copy
 from functools import lru_cache
 from itertools import combinations
+from logging.handlers import RotatingFileHandler
 from os.path import join
 from shutil import rmtree as _rmtree
 from typing import Optional, Tuple, Set, Dict, Any
@@ -22,9 +23,18 @@ except ImportError:
 
 from loader.types import RepoInfo
 
+if not os.path.exists('logs'):
+    os.mkdir('logs')
+
 logging.basicConfig(level=logging.INFO,
                     format='[%(asctime)s - %(levelname)s] - %(name)s - %(message)s',
-                    datefmt='%d-%b-%y %H:%M:%S')
+                    datefmt='%d-%b-%y %H:%M:%S',
+                    handlers=[
+                        RotatingFileHandler(
+                            "logs/loader.log", maxBytes=81920, backupCount=10),
+                        logging.StreamHandler()
+                    ])
+
 _LOG = logging.getLogger("loader")
 
 
@@ -32,9 +42,10 @@ def log(msg: str) -> None:
     _LOG.info(msg)
 
 
-def error(msg: str, hint: Optional[str] = None) -> None:
+def error(msg: str, hint: Optional[str] = None, interrupt=True) -> None:
     _LOG.error(msg + "\n\tHINT: " + hint if hint else msg)
-    terminate(os.getpid())
+    if interrupt:
+        raise KeyboardInterrupt
 
 
 def terminate(pid: int) -> None:
@@ -162,14 +173,36 @@ def grab_conflicts(requirements: Set[str]) -> Set[str]:
     return conflicts
 
 
+def _perm(path: str, check: Optional[int], perm: int) -> bool:
+    return bool(check and os.access(path, check) or os.chmod(path, perm))
+
+
+def assert_read(path: str) -> bool:
+    return _perm(path, os.R_OK, stat.S_IREAD)
+
+
+def assert_write(path: str, force=False) -> bool:
+    return _perm(path, None if force else os.W_OK, stat.S_IWRITE)
+
+
+def assert_read_write(path: str) -> bool:
+    return _perm(path, os.R_OK | os.W_OK, stat.S_IREAD | stat.S_IWRITE)
+
+
 def _on_error(func, path, _) -> None:
-    if os.path.exists(path) and not os.access(path, os.W_OK):
-        os.chmod(path, stat.S_IWUSR)
+    if os.path.exists(path) and not assert_write(path):
         func(path)
 
 
+def remove(path: str) -> None:
+    if os.path.exists(path):
+        assert_write(path)
+        os.remove(path)
+
+
 def rmtree(path: str) -> None:
-    _rmtree(path, onerror=_on_error)
+    if os.path.isdir(path):
+        _rmtree(path, onerror=_on_error)
 
 
 def clean_core() -> None:
